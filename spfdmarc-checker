@@ -67,7 +67,7 @@ count_spf_lookups() {
 
     # Resolve SPF for this domain
     local record
-    record=$(dig +short TXT "$domain" $DNS_SERVER 2>/dev/null | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
+    record=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
     [[ -z "$record" ]] && return
 
     # Extract DNS-triggering mechanisms
@@ -95,7 +95,7 @@ analyze_mx() {
     echo -e "${BOLD}$SEP${RESET}"
 
     # Get MX
-    mx_records=$(dig +short MX "$domain" $DNS_SERVER)
+    mx_records=$(dig +short MX "$domain" ${DNS_SERVER:+"$DNS_SERVER"})
     if [[ -z "$mx_records" ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No MX records found for $domain${RESET}"
         echo -e "${BOLD}$SEP${RESET}"
@@ -113,7 +113,7 @@ analyze_mx() {
         mx_host="${mx_host%.}"
 
         # Get A and AAAA and transform
-        ips=$((dig +short A "$mx_host" $DNS_SERVER; dig +short AAAA "$mx_host" $DNS_SERVER) | sed '/^$/d')
+        ips=$((dig +short A "$mx_host" ${DNS_SERVER:+"$DNS_SERVER"}; dig +short AAAA "$mx_host" ${DNS_SERVER:+"$DNS_SERVER"}) | sed '/^$/d')
 
         if [[ -z "$ips" ]]; then
             echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}$mx_host has no resolved IPs${RESET}"
@@ -130,7 +130,7 @@ analyze_spf() {
     local domain="$1"
 
     # Retrieve SPF record(s)
-    spf_all=$(dig +short TXT "$domain" $DNS_SERVER | grep 'v=spf1' | sed 's/" "//g' | tr -d '"')
+    spf_all=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=spf1' | sed 's/" "//g' | tr -d '"')
     spf_count=$(echo "$spf_all" | grep -c 'v=spf1')
 
     # Use first record for analysis
@@ -210,7 +210,7 @@ analyze_dmarc() {
     local domain="$1"
 
     # Retrieve DMARC record
-    dmarc=$(dig +short TXT "_dmarc.$domain" $DNS_SERVER | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
+    dmarc=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
 
     echo -e "${BOLD}$SEP${RESET}"
     echo -e "${BOLD}${BLUE}DMARC Analysis:${RESET}"
@@ -329,7 +329,7 @@ analyze_dkim() {
     echo -e "${BOLD}$SEP${RESET}"
 
     for selector in "${selectors[@]}"; do
-        record=$(dig +short TXT "${selector}._domainkey.${domain}" $DNS_SERVER | sed 's/" "//g' | tr -d '"')
+        record=$(dig +short TXT "${selector}._domainkey.${domain}" ${DNS_SERVER:+"$DNS_SERVER"} | sed 's/" "//g' | tr -d '"')
 
         if [[ -n "$record" ]]; then
             found=true
