@@ -11,8 +11,6 @@ CYAN='\033[36m'
 BOLD='\033[1m'
 RESET='\033[0m' # RESET
 
-DNS_SERVER="@8.8.8.8"
-
 # Separator
 SEP="-----------------------------------"
 
@@ -31,6 +29,7 @@ show_help() {
     echo -e "  ${YELLOW}--dmarc${RESET}              [✓] Only analyze DMARC record"
     echo -e "  ${YELLOW}--dkim${RESET}               [✓] Only analyze DKIM record"
     echo -e "  ${YELLOW}-s, --selector SEL${RESET}   Test a specific DKIM selector"
+    echo -e "  ${YELLOW}--dns 8.8.8.8${RESET}        Perform DNS resolutions with custom DNS server (default: 8.8.8.8)"
     echo -e "  ${YELLOW}-q, --quiet${RESET}          Hide header"
     echo
     echo -e "${BOLD}${BLUE}Description:${RESET}"
@@ -353,6 +352,15 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
+        --dns)
+            if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                DNS_SERVER="@${2}"
+                shift 2
+            else
+                echo -e "${RED}[✗] Missing IP address of custom DNS server for --dns${RESET}"
+                exit 1
+            fi
+            ;;
         -q|--quiet)
             show_header=false
             shift
@@ -377,6 +385,11 @@ fi
 if [[ -z "$DOMAIN" ]]; then
     show_help
     exit 1
+fi
+
+# If user didn't use --dns, use default dns server
+if [[ -z "$DNS_SERVER" ]]; then
+    DNS_SERVER='@8.8.8.8'
 fi
 
 # Check dig
