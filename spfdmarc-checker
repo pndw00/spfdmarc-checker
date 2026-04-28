@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION='2.1'
+VERSION='2.2'
 
 # ANSI Style
 RED='\033[31m'
