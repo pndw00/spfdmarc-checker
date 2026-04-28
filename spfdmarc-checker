@@ -124,15 +124,16 @@ analyze_spf() {
     echo -e "${BLUE}Detected mechanisms:${RESET}"
 
     # Parse mechanisms
-    echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect:[^ ]+|a\b|mx\b|ptr\b)\b' | while read mech; do
+    echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b' | while read mech; do
         case "$mech" in
             include:*)   echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}External source allowed: $mech${RESET}" ;;
             ip4:*)       echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Authorized IPv4: ${mech#ip4:}${RESET}" ;;
             ip6:*)       echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Authorized IPv6: ${mech#ip6:}${RESET}" ;;
-            a)           echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'a' mechanism detected – valid, may increase DNS lookups${RESET}" ;;
-            mx)          echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'mx' mechanism detected – OK, but ensure all MX servers are trusted${RESET}" ;;
-            ptr)         echo -e "[${BOLD}${RED}✗${RESET}] ${RED} 'ptr' mechanism deprecated – should be avoided${RESET}" ;;
-            redirect:*)  echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}SPF redirected to: ${mech#redirect:}${RESET}" ;;
+            a|a:*|a/*)   echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'a' mechanism detected: $mech – valid, may increase DNS lookups${RESET}" ;;
+            mx|mx:*|mx/*) echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'mx' mechanism detected: $mech – OK, but ensure all MX servers are trusted${RESET}" ;;
+            ptr|ptr:*)   echo -e "[${BOLD}${RED}✗${RESET}] ${RED}'ptr' mechanism deprecated ($mech) – should be avoided${RESET}" ;;
+            redirect=*)  echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}SPF redirected to: ${mech#redirect=}${RESET}" ;;
+            exists:*)    echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}Exists mechanism: ${mech#exists:} – advanced macro usage${RESET}" ;;
         esac
     done
 }
