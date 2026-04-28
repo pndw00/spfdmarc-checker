@@ -192,7 +192,8 @@ analyze_spf() {
     echo -e "${BLUE}Detected mechanisms:${RESET}"
 
     # Parse mechanisms
-    echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b' | while read mech; do
+    while read -r mech; do
+        [[ -z "$mech" ]] && continue
         case "$mech" in
             include:*)   echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}External source allowed: $mech${RESET}" ;;
             ip4:*)       echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Authorized IPv4: ${mech#ip4:}${RESET}" ;;
@@ -203,7 +204,7 @@ analyze_spf() {
             redirect=*)  echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}SPF redirected to: ${mech#redirect=}${RESET}" ;;
             exists:*)    echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}Exists mechanism: ${mech#exists:} – advanced macro usage${RESET}" ;;
         esac
-    done
+    done <<< "$(echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b')"
 }
 
 analyze_dmarc() {
