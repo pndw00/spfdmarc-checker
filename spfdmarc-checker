@@ -15,6 +15,12 @@ RESET='\033[0m' # RESET
 SEP="-----------------------------------"
 
 show_header=true
+no_color=false
+
+# Disable ANSI colors (--no-color or non-TTY output)
+disable_colors() {
+    RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' RESET=''
+}
 
 show_help() {
     local script_name
@@ -31,6 +37,7 @@ show_help() {
     echo -e "  ${YELLOW}-s, --selector SEL${RESET}   Test a specific DKIM selector"
     echo -e "  ${YELLOW}--dns 8.8.8.8${RESET}        Perform DNS resolutions with custom DNS server (default: 8.8.8.8)"
     echo -e "  ${YELLOW}-q, --quiet${RESET}          Hide header"
+    echo -e "  ${YELLOW}--no-color${RESET}           Disable colored output (auto-detected if not a TTY)"
     echo
     echo -e "${BOLD}${BLUE}Description:${RESET}"
     echo -e "  This script retrieves and analyzes ${CYAN}MX${RESET}, ${CYAN}SPF${RESET}, ${CYAN}DMARC${RESET} and ${CYAN}DKIM${RESET} records for the given domain."
@@ -438,6 +445,10 @@ while [[ $# -gt 0 ]]; do
             show_header=false
             shift
             ;;
+        --no-color)
+            no_color=true
+            shift
+            ;;
         *)
             if [[ -z "$DOMAIN" ]]; then
                 DOMAIN="$1"
@@ -463,6 +474,11 @@ fi
 # If user didn't use --dns, use default dns server
 if [[ -z "$DNS_SERVER" ]]; then
     DNS_SERVER='@8.8.8.8'
+fi
+
+# Disable colors if requested, if NO_COLOR env is set, or if output is not a terminal
+if $no_color || [[ -n "$NO_COLOR" ]] || [[ ! -t 1 ]]; then
+    disable_colors
 fi
 
 # Check dig
