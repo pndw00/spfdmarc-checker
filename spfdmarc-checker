@@ -318,7 +318,7 @@ analyze_dkim() {
 }
 
 # Main
-MODE=()
+MODES=()
 DOMAIN=""
 
 # Loop over all arguments
