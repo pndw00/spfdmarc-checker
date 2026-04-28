@@ -50,6 +50,43 @@ show_help() {
     echo -e "  [${BOLD}${RED}✗${RESET}] Error / Missing / Dangerous"
 }
 
+# Recursive SPF DNS lookup counter (RFC 7208: max 10)
+# Counts: include, a, mx, ptr, exists, redirect (each = 1 lookup)
+# Then follows include/redirect recursively
+_spf_visited=()
+_spf_lookup_total=0
+
+count_spf_lookups() {
+    local domain="$1"
+
+    # Circular include protection
+    for visited in "${_spf_visited[@]}"; do
+        [[ "$visited" == "$domain" ]] && return
+    done
+    _spf_visited+=("$domain")
+
+    # Resolve SPF for this domain
+    local record
+    record=$(dig +short TXT "$domain" $DNS_SERVER 2>/dev/null | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
+    [[ -z "$record" ]] && return
+
+    # Extract DNS-triggering mechanisms
+    local mechanisms
+    mechanisms=$(echo "$record" | grep -oE '\b(include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b')
+
+    # Count each mechanism as 1 lookup
+    while IFS= read -r mech; do
+        [[ -z "$mech" ]] && continue
+        (( _spf_lookup_total++ ))
+
+        # Recurse into include and redirect targets
+        case "$mech" in
+            include:*) count_spf_lookups "${mech#include:}" ;;
+            redirect=*) count_spf_lookups "${mech#redirect=}" ;;
+        esac
+    done <<< "$mechanisms"
+}
+
 analyze_mx() {
     local domain="$1"
 
@@ -131,6 +168,24 @@ analyze_spf() {
         esac
     else
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No 'all' mechanism found – SPF record is incomplete${RESET}"
+    fi
+
+    echo
+    # DNS lookup count – recursive (RFC 7208: max 10 total, includes nested)
+    _spf_visited=()
+    _spf_lookup_total=0
+    count_spf_lookups "$domain"
+    dns_lookup_count=$_spf_lookup_total
+
+    if (( dns_lookup_count > 10 )); then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DNS lookups: $dns_lookup_count/10 – exceeds RFC 7208 limit (causes PermError)${RESET}"
+    elif (( dns_lookup_count >= 8 )); then
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}DNS lookups: $dns_lookup_count/10 – approaching RFC 7208 limit${RESET}"
+    else
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DNS lookups: $dns_lookup_count/10${RESET}"
+    fi
+    if (( ${#_spf_visited[@]} > 1 )); then
+        echo -e "${BLUE}Domains resolved:${RESET} ${_spf_visited[*]}"
     fi
 
     echo
