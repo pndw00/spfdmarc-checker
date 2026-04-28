@@ -321,7 +321,10 @@ analyze_dkim() {
     if [[ ${#SELECTORS[@]} -gt 0 ]]; then
         selectors=("${SELECTORS[@]}")
     else
-        selectors=("default" "selector1" "selector2" "google" "mail" "mx" "smtp" "dkim" "mailo" "s1" "s2" "zmail")
+        selectors=("default" "selector1" "selector2" "google" "mail" "mx" "smtp" "dkim"
+                   "mailo" "s1" "s2" "zmail" "k1" "k2" "k3" "mandrill" "amazonses"
+                   "cm" "protonmail" "mxvault" "everlytickey1" "everlytickey2"
+                   "dkim1024" "dkim2048" "mailjet" "turbo-smtp")
     fi
 
 
