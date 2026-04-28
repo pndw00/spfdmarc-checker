@@ -42,7 +42,9 @@ Options:
   --dmarc              [✓] Only analyze DMARC record
   --dkim               [✓] Only analyze DKIM record
   -s, --selector SEL   Test a specific DKIM selector
+  --dns 8.8.8.8        Perform DNS resolutions with custom DNS server (default: 8.8.8.8)
   -q, --quiet          Hide header
+  --no-color           Disable colored output (auto-detected if not a TTY)
 
 Description:
   This script retrieves and analyzes MX, SPF, DMARC and DKIM records for the given domain.
