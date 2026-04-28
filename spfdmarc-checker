@@ -1,0 +1,402 @@
+#!/usr/bin/env bash
+
+VERSION='2.1'
+
+# ANSI Style
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[34m'
+CYAN='\033[36m'
+BOLD='\033[1m'
+RESET='\033[0m' # RESET
+
+DNS_SERVER="@8.8.8.8"
+
+# Separator
+SEP="-----------------------------------"
+
+show_header=true
+
+show_help() {
+    local script_name
+    script_name=$(basename "$0")
+
+    echo -e "${BOLD}${BLUE}Usage:${RESET} ${GREEN}$script_name [options] domain.com${RESET}"
+    echo
+    echo -e "${BOLD}${BLUE}Options:${RESET}"
+    echo -e "  ${YELLOW}-h, --help${RESET}           Show this help message"
+    echo -e "  ${YELLOW}--mx${RESET}                 [✓] Only analyze MX record"
+    echo -e "  ${YELLOW}--spf${RESET}                [✓] Only analyze SPF record"
+    echo -e "  ${YELLOW}--dmarc${RESET}              [✓] Only analyze DMARC record"
+    echo -e "  ${YELLOW}--dkim${RESET}               [✓] Only analyze DKIM record"
+    echo -e "  ${YELLOW}-s, --selector SEL${RESET}   Test a specific DKIM selector"
+    echo -e "  ${YELLOW}-q, --quiet${RESET}          Hide header"
+    echo
+    echo -e "${BOLD}${BLUE}Description:${RESET}"
+    echo -e "  This script retrieves and analyzes ${CYAN}MX${RESET}, ${CYAN}SPF${RESET}, ${CYAN}DMARC${RESET} and ${CYAN}DKIM${RESET} records for the given domain."
+    echo -e "  It helps auditing email security quickly and visually."
+    echo
+    echo -e "${BOLD}${BLUE}Example:${RESET}"
+    echo -e "  ${GREEN}$script_name example.com${RESET}                     # Analyze all records"
+    echo -e "  ${GREEN}$script_name --mx example.com${RESET}                # Analyze only MX"
+    echo -e "  ${GREEN}$script_name --spf example.com${RESET}               # Analyze only SPF"
+    echo -e "  ${GREEN}$script_name --dmarc example.com${RESET}             # Analyze only DMARC"
+    echo -e "  ${GREEN}$script_name --dkim example.com${RESET}              # Analyze only DKIM"
+    echo -e "  ${GREEN}$script_name --dkim -s default example.com${RESET}   # Analyze DKIM for a specific selector"
+    echo
+    echo -e "${BOLD}${BLUE}Symbols:${RESET}"
+    echo -e "  [${BOLD}${GREEN}✓${RESET}] Success / Found"
+    echo -e "  [${BOLD}${YELLOW}!!${RESET}] Warning / Partial"
+    echo -e "  [${BOLD}${RED}✗${RESET}] Error / Missing / Dangerous"
+}
+
+analyze_mx() {
+    local domain="$1"
+
+    echo -e "${BOLD}$SEP${RESET}"
+    echo -e "${BOLD}${BLUE}MX Record Check:${RESET}"
+    echo -e "${BOLD}$SEP${RESET}"
+
+    # Get MX
+    mx_records=$(dig +short MX "$domain" $DNS_SERVER)
+    if [[ -z "$mx_records" ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No MX records found for $domain${RESET}"
+        echo -e "${BOLD}$SEP${RESET}"
+        return
+    fi
+
+    echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}MX records found:${RESET}"
+    echo "$mx_records"
+    echo
+
+    # IPs resolution for each MX
+    echo -e "${BLUE}Resolved IPs for MX servers:${RESET}"
+    while read -r priority mx_host; do
+        # Remove period at the end
+        mx_host="${mx_host%.}"
+
+        # Get A and AAAA and transform
+        ips=$((dig +short A "$mx_host" $DNS_SERVER; dig +short AAAA "$mx_host" $DNS_SERVER) | sed '/^$/d')
+
+        if [[ -z "$ips" ]]; then
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}$mx_host has no resolved IPs${RESET}"
+        else
+            echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}$mx_host :${RESET}"
+            while read -r ip; do
+                echo -e "  - ${GREEN}${ip}${RESET}"
+            done <<< "$ips"
+        fi
+    done <<< "$mx_records"
+}
+
+analyze_spf() {
+    local domain="$1"
+
+    # Retrieve SPF record
+    spf=$(dig +short TXT "$domain" $DNS_SERVER | grep 'v=spf1' | sed 's/" "//g' | tr -d '"')
+
+    echo -e "${BOLD}$SEP${RESET}"
+    echo -e "${BOLD}${BLUE}SPF Analysis:${RESET}"
+    echo -e "${CYAN}$spf${RESET}"
+    echo -e "${BOLD}$SEP${RESET}"
+
+    # Check SPF prefix
+    if [[ "$spf" != v=spf1* ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}SPF record not found${RESET}"
+    else
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}SPF version detected: v=spf1${RESET}"
+    fi
+
+    # Check final "all" mechanism
+    if echo "$spf" | grep -qE '[-~?+]all'; then
+        last_all=$(echo "$spf" | grep -oE '[-~?+]all')
+        case "$last_all" in
+            "-all")  echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}-all: Strict policy – only authorized servers may send emails${RESET}" ;;
+            "~all")  echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}~all: Soft fail – unauthorized sources flagged but still accepted${RESET}" ;;
+            "?all")  echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}?all: Neutral – no effective SPF protection${RESET}" ;;
+            "+all")  echo -e "[${BOLD}${RED}✗${RESET}] ${RED}+all: Permits ANY sender – highly dangerous configuration${RESET}" ;;
+        esac
+    else
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No 'all' mechanism found – SPF record is incomplete${RESET}"
+    fi
+
+    echo
+    echo -e "${BLUE}Detected mechanisms:${RESET}"
+
+    # Parse mechanisms
+    echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect:[^ ]+|a\b|mx\b|ptr\b)\b' | while read mech; do
+        case "$mech" in
+            include:*)   echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}External source allowed: $mech${RESET}" ;;
+            ip4:*)       echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Authorized IPv4: ${mech#ip4:}${RESET}" ;;
+            ip6:*)       echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Authorized IPv6: ${mech#ip6:}${RESET}" ;;
+            a)           echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'a' mechanism detected – valid, may increase DNS lookups${RESET}" ;;
+            mx)          echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'mx' mechanism detected – OK, but ensure all MX servers are trusted${RESET}" ;;
+            ptr)         echo -e "[${BOLD}${RED}✗${RESET}] ${RED} 'ptr' mechanism deprecated – should be avoided${RESET}" ;;
+            redirect:*)  echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}SPF redirected to: ${mech#redirect:}${RESET}" ;;
+        esac
+    done
+}
+
+analyze_dmarc() {
+    local domain="$1"
+
+    # Retrieve DMARC record
+    dmarc=$(dig +short TXT "_dmarc.$domain" $DNS_SERVER | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
+
+    echo -e "${BOLD}$SEP${RESET}"
+    echo -e "${BOLD}${BLUE}DMARC Analysis:${RESET}"
+    echo -e "${CYAN}$dmarc${RESET}"
+    echo -e "${BOLD}$SEP${RESET}"
+
+    # Check DMARC prefix
+    if [[ ! "$dmarc" =~ ^v=DMARC1 ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC record not found${RESET}"
+    else
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DMARC version detected: v=DMARC1${RESET}"
+    fi
+
+    # Check DMARC Policy (p)
+    if [[ "$dmarc" =~ p=none ]]; then
+        policy="none"
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}p=none: Emails that fail verification pass through${RESET}"
+    elif [[ "$dmarc" =~ p=quarantine ]]; then
+        policy="quarantine"
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}p=quarantine: Suspicious emails go to spam (partial protection)${RESET}"
+    elif [[ "$dmarc" =~ p=reject ]]; then
+        policy="reject"
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}p=reject: Non-compliant emails rejected (strong protection)${RESET}"
+    else
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC invalid: missing mandatory 'p=' tag => emails not protected${RESET}"
+    fi
+
+        # Check DMARC subdomains Policy (sp)
+    if [[ "$dmarc" =~ sp=none ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}sp=none: Subdomains not protected${RESET}"
+    elif [[ "$dmarc" =~ sp=quarantine ]]; then
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}sp=quarantine: Suspicious emails from subdomains go to spam${RESET}"
+    elif [[ "$dmarc" =~ sp=reject ]]; then
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}sp=reject: Strong protection for subdomains${RESET}"
+    else
+        #sp not defined > fallback on p=
+        if [[ "$policy" == "none"  ]]; then
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}sp not defined => Subdomains inherit p=none: not protected${RESET}"
+        elif [[ "$policy" == "quarantine"  ]]; then
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}sp not defined => Subdomains inherit p=quarantine: partial protection${RESET}"
+        elif [[ "$policy" == "reject"  ]]; then
+            echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}sp not defined => Subdomains inherit p=reject: strong protection${RESET}"
+        fi
+    fi
+
+    echo
+
+    # Application percentage (pct)
+    if [[ "$dmarc" =~ pct=([0-9]+) ]]; then
+        pct="${BASH_REMATCH[1]}"
+        if (( pct == 100 )); then
+            echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}pct=100: Full application of the policy${RESET}"
+        else
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}pct=$pct: Partial application (testing phase)${RESET}"
+        fi
+    else
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}pct not defined: Default 100 (recommended to specify)${RESET}"
+    fi
+
+    # Aggregate reports (rua)
+    if [[ "$dmarc" =~ rua=([^;]+) ]]; then
+        IFS=',' read -ra rua_list <<< "${BASH_REMATCH[1]}"
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}Aggregate report addresses (rua):${RESET}"
+        for addr in "${rua_list[@]}"; do
+            echo -e "    - ${addr}"
+        done
+    else
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Missing rua: No aggregate DMARC reports${RESET}"
+    fi
+
+    # Forensic reports (ruf)
+    if [[ "$dmarc" =~ ruf=([^;]+) ]]; then
+        IFS=',' read -ra ruf_list <<< "${BASH_REMATCH[1]}"
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Forensic report addresses (ruf – may contain sensitive info):${RESET}"
+        for addr in "${ruf_list[@]}"; do
+            echo -e "    - ${addr}"
+        done
+    else
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Missing ruf: No individual failure reports${RESET}"
+    fi
+
+    # Alignment DKIM
+    if [[ "$dmarc" =~ adkim=s ]]; then
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}adkim=s: Strict DKIM alignment${RESET}"
+    elif [[ "$dmarc" =~ adkim=r ]]; then
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}adkim=r: Relaxed DKIM alignment${RESET}"
+    else
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}adkim not defined: Default = relaxed (r)${RESET}"
+    fi
+
+    # Alignment SPF
+    if [[ "$dmarc" =~ aspf=s ]]; then
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}aspf=s: Strict SPF alignment${RESET}"
+    elif [[ "$dmarc" =~ aspf=r ]]; then
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}aspf=r: Relaxed SPF alignment${RESET}"
+    else
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}aspf not defined: Default = relaxed (r)${RESET}"
+    fi
+}
+
+analyze_dkim() {
+    local domain="$1"
+
+    local found=false
+
+    # If user use -s or --selector argument use only this selector if not use defaults
+    if [[ ${#SELECTORS[@]} -gt 0 ]]; then
+        selectors=("${SELECTORS[@]}")
+    else
+        selectors=("default" "selector1" "selector2" "google" "mail" "mx" "smtp" "dkim" "mailo" "s1" "s2" "zmail")
+    fi
+
+
+    echo -e "${BOLD}$SEP${RESET}"
+    echo -e "${BOLD}${BLUE}DKIM Analysis:${RESET}"
+    echo -e "${BOLD}$SEP${RESET}"
+
+    for selector in "${selectors[@]}"; do
+        record=$(dig +short TXT "${selector}._domainkey.${domain}" $DNS_SERVER | sed 's/" "//g' | tr -d '"')
+
+        if [[ -n "$record" ]]; then
+            found=true
+            echo -e "[${BOLD}${GREEN}✓${RESET}] DKIM record found for selector '${GREEN}${selector}${RESET}'"
+            echo -e "${CYAN}$record${RESET}"
+
+            # Extract base64 public key
+            if [[ "$record" =~ p=([^;]+) ]]; then
+                key_b64="${BASH_REMATCH[1]}"
+                clean_key_b64=$(echo "$key_b64" | tr -d '\r\n[:space:]')
+
+                # Try decoding and measuring RSA key bits
+                if command -v openssl &>/dev/null && echo "$clean_key_b64" | base64 -d >/dev/null 2>&1; then
+                    tmp_der=$(mktemp)
+                    echo "$clean_key_b64" | base64 -d > "$tmp_der" 2>/dev/null
+
+                    key_bits=$(openssl pkey -pubin -inform DER -in "$tmp_der" -text -noout 2>/dev/null \
+                        | awk -F'[()]' '/Public-Key/ {gsub(/[^0-9]/,"",$2); print $2; exit}')
+
+                    # If RSA parsing fails, detect other key types (ex: ed25519)
+                    if [[ -z "$key_bits" ]]; then
+                        if grep -q "k=ed25519" <<< "$record"; then
+                            echo -e "[${BOLD}${GREEN}i${RESET}] ${GREEN}Key type: Ed25519 - secure${RESET}"
+                        else
+                            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Cannot determine key size (non-RSA or parsing issue)${RESET}"
+                        fi
+                    else
+                        # RSA Key length evaluation
+                        if (( key_bits < 1024 )); then
+                            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}RSA Key: ${key_bits} bits - DANGEROUS, upgrade to 2048+${RESET}"
+                        elif (( key_bits < 2048 )); then
+                            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}RSA Key: ${key_bits} bits - weak, upgrade recommended${RESET}"
+                        else
+                            echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}RSA Key: ${key_bits} bits - OK${RESET}"
+                        fi
+                    fi
+                    rm -f "$tmp_der"
+
+                else
+                    echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Key extraction failed (invalid b64 or missing openssl)${RESET}"
+                fi
+
+            else
+                echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Invalid DKIM: Missing public key 'p='${RESET}"
+            fi
+            echo
+        fi
+    done
+
+    if [[ $found == false ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No DKIM record found${RESET}"
+        echo -e "${YELLOW}Selectors tested:${RESET} ${selectors[*]}"
+        echo -e "${YELLOW}Either DKIM is not configured or uses a different selector${RESET}"
+    fi
+}
+
+# Main
+MODE=()
+DOMAIN=""
+
+# Loop over all arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        --mx) MODES+=("mx")
+            shift
+            ;;
+        --spf)
+            MODES+=("spf")
+            shift
+            ;;
+        --dmarc)
+            MODES+=("dmarc")
+            shift
+            ;;
+        --dkim)
+            MODES+=("dkim")
+            shift
+            ;;
+        -s|--selector)
+            if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                SELECTORS+=("$2")
+                shift 2
+            else
+                echo -e "${RED}[✗] Missing selector value for -s/--selector${RESET}"
+                exit 1
+            fi
+            ;;
+        -q|--quiet)
+            show_header=false
+            shift
+            ;;
+        *)
+            if [[ -z "$DOMAIN" ]]; then
+                DOMAIN="$1"
+            else
+                echo -e "[${BOLD}${RED}✗${RESET}] ${RED} Unknown argument: $1${RESET}"
+                show_help
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#MODES[@]} -eq 0 ]]; then
+    MODES=("mx" "spf" "dmarc" "dkim")
+fi
+
+if [[ -z "$DOMAIN" ]]; then
+    show_help
+    exit 1
+fi
+
+# Check dig
+if ! command -v dig &> /dev/null; then
+    echo -e "[${BOLD}${RED}✗${RESET}] ${RED} 'dig' command not found. Install dnsutils or equivalent.${RESET}"
+    exit 1
+fi
+
+if $show_header; then
+    echo -e "${BLUE}┏━┓┏━┓┏━╸   ╺┳┓┏┳┓┏━┓┏━┓┏━╸   ┏━╸╻ ╻┏━╸┏━╸╻┏ ┏━╸┏━┓${RESET}"
+    echo -e "${BLUE}┗━┓┣━┛┣╸     ┃┃┃┃┃┣━┫┣┳┛┃     ┃  ┣━┫┣╸ ┃  ┣┻┓┣╸ ┣┳┛${RESET}"
+    echo -e "${BLUE}┗━┛╹  ╹     ╺┻┛╹ ╹╹ ╹╹┗╸┗━╸   ┗━╸╹ ╹┗━╸┗━╸╹ ╹┗━╸╹┗╸${RESET} v$VERSION"
+fi
+
+# Run analysis
+for mode in "${MODES[@]}"; do
+    case "$mode" in
+        mx)     analyze_mx "$DOMAIN" ;;
+        spf)    analyze_spf "$DOMAIN" ;;
+        dmarc)  analyze_dmarc "$DOMAIN" ;;
+        dkim)  analyze_dkim "$DOMAIN" ;;
+    esac
+done
