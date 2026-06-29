@@ -248,26 +248,29 @@ analyze_dmarc() {
     fi
     echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DMARC version detected: v=DMARC1${RESET}"
 
-    # Check DMARC Policy (p)
-    if [[ "$dmarc" =~ p=none ]]; then
+    # Check DMARC Policy (p) – anchored so np=/sp= aren't matched as p=
+    if [[ "$dmarc" =~ (^|[[:space:];])p=none ]]; then
         policy="none"
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}p=none: Emails that fail verification pass through${RESET}"
-    elif [[ "$dmarc" =~ p=quarantine ]]; then
+    elif [[ "$dmarc" =~ (^|[[:space:];])p=quarantine ]]; then
         policy="quarantine"
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}p=quarantine: Suspicious emails go to spam (partial protection)${RESET}"
-    elif [[ "$dmarc" =~ p=reject ]]; then
+    elif [[ "$dmarc" =~ (^|[[:space:];])p=reject ]]; then
         policy="reject"
         echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}p=reject: Non-compliant emails rejected (strong protection)${RESET}"
     else
-        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC invalid: missing mandatory 'p=' tag => emails not protected${RESET}"
+        # RFC 9989: 'p' is RECOMMENDED, not mandatory; an absent or invalid
+        # 'p' tag is treated as if the record contained p=none.
+        policy="none"
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}p absent/invalid: treated as p=none => emails not protected${RESET}"
     fi
 
         # Check DMARC subdomains Policy (sp)
-    if [[ "$dmarc" =~ sp=none ]]; then
+    if [[ "$dmarc" =~ (^|[[:space:];])sp=none ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}sp=none: Subdomains not protected${RESET}"
-    elif [[ "$dmarc" =~ sp=quarantine ]]; then
+    elif [[ "$dmarc" =~ (^|[[:space:];])sp=quarantine ]]; then
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}sp=quarantine: Suspicious emails from subdomains go to spam${RESET}"
-    elif [[ "$dmarc" =~ sp=reject ]]; then
+    elif [[ "$dmarc" =~ (^|[[:space:];])sp=reject ]]; then
         echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}sp=reject: Strong protection for subdomains${RESET}"
     else
         #sp not defined > fallback on p=
@@ -282,18 +285,24 @@ analyze_dmarc() {
         fi
     fi
 
+    # Non-existent subdomain policy (np) – RFC 9989; falls back to sp/p
+    if [[ "$dmarc" =~ (^|[[:space:];])np=none ]]; then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}np=none: Non-existent subdomains not protected (RFC 9989)${RESET}"
+    elif [[ "$dmarc" =~ (^|[[:space:];])np=quarantine ]]; then
+        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}np=quarantine: Non-existent subdomains quarantined (RFC 9989)${RESET}"
+    elif [[ "$dmarc" =~ (^|[[:space:];])np=reject ]]; then
+        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}np=reject: Non-existent subdomains rejected (RFC 9989)${RESET}"
+    else
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}np not defined: consider np=reject to protect non-existent subdomains (RFC 9989)${RESET}"
+    fi
+
     echo
 
-    # Application percentage (pct)
-    if [[ "$dmarc" =~ pct=([0-9]+) ]]; then
-        pct="${BASH_REMATCH[1]}"
-        if (( pct == 100 )); then
-            echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}pct=100: Full application of the policy${RESET}"
-        else
-            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}pct=$pct: Partial application (testing phase)${RESET}"
-        fi
-    else
-        echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}pct not defined: Default 100 (recommended to specify)${RESET}"
+    # Application percentage (pct) – removed in RFC 9989; flag it only if
+    # still present (absence is now the norm and needs no message).
+    if [[ "$dmarc" =~ (^|[[:space:];])pct=([0-9]+) ]]; then
+        pct="${BASH_REMATCH[2]}"
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}pct=$pct: obsolete tag – removed in RFC 9989 (ignored by receivers)${RESET}"
     fi
 
     # Aggregate reports (rua)
@@ -307,6 +316,12 @@ analyze_dmarc() {
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Missing rua: No aggregate DMARC reports${RESET}"
     fi
 
+    # Aggregate report interval (ri) – removed in RFC 9989
+    if [[ "$dmarc" =~ (^|[[:space:];])ri=([0-9]+) ]]; then
+        ri="${BASH_REMATCH[2]}"
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}ri=$ri: requested aggregate report interval (~$(( ri / 3600 ))h) – removed in RFC 9989${RESET}"
+    fi
+
     # Forensic reports (ruf)
     if [[ "$dmarc" =~ ruf=([^;]+) ]]; then
         IFS=',' read -ra ruf_list <<< "${BASH_REMATCH[1]}"
@@ -316,6 +331,22 @@ analyze_dmarc() {
         done
     else
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Missing ruf: No individual failure reports${RESET}"
+    fi
+
+    # Failure reporting options (fo) – only relevant when ruf is set
+    if [[ "$dmarc" =~ (^|[[:space:];])fo=([^;]+) ]]; then
+        fo="${BASH_REMATCH[2]}"
+        case "$fo" in
+            *1*) echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}fo=$fo: report on any SPF/DKIM failure (needs ruf)${RESET}" ;;
+            0)   echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}fo=0: report only if all mechanisms fail (default; needs ruf)${RESET}" ;;
+            *)   echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}fo=$fo: failure reporting options (needs ruf)${RESET}" ;;
+        esac
+    fi
+
+    # Failure report format (rf) – removed in RFC 9989
+    if [[ "$dmarc" =~ (^|[[:space:];])rf=([^;]+) ]]; then
+        rf="${BASH_REMATCH[2]}"
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}rf=$rf: failure report format (default afrf) – removed in RFC 9989${RESET}"
     fi
 
     # Alignment DKIM
