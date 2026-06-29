@@ -144,9 +144,10 @@ analyze_mx() {
 analyze_spf() {
     local domain="$1"
 
-    # Retrieve SPF record(s)
-    spf_all=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=spf1' | sed 's/" "//g' | tr -d '"')
-    spf_count=$(echo "$spf_all" | grep -c 'v=spf1')
+    # Retrieve SPF record(s). RFC 7208 §4.5: the version section must be exactly
+    # "v=spf1" terminated by a space or end of record.
+    spf_all=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep -E 'v=spf1[ "]' | sed 's/" "//g' | tr -d '"')
+    spf_count=$(echo "$spf_all" | grep -cE 'v=spf1( |$)')
 
     # Use first record for analysis
     spf=$(echo "$spf_all" | head -n1)
@@ -156,8 +157,8 @@ analyze_spf() {
     echo -e "${CYAN}$spf${RESET}"
     echo -e "${BOLD}$SEP${RESET}"
 
-    # Check SPF prefix
-    if [[ "$spf" != v=spf1* ]]; then
+    # Check SPF prefix (must be "v=spf1" followed by a space or end of record)
+    if [[ ! "$spf" =~ ^v=spf1($|[[:space:]]) ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}SPF record not found${RESET}"
         echo -e "${BOLD}$SEP${RESET}"
         return
@@ -254,9 +255,10 @@ analyze_dmarc() {
     local domain="$1"
     local policy=""
 
-    # Retrieve DMARC record(s)
-    dmarc_all=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
-    dmarc_count=$(echo "$dmarc_all" | grep -c 'v=DMARC1')
+    # Retrieve DMARC record(s). The version token must be exactly "v=DMARC1"
+    # terminated by ';', whitespace or end.
+    dmarc_all=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep -E 'v=DMARC1[; "]' | sed 's/" "//g' | tr -d '"')
+    dmarc_count=$(echo "$dmarc_all" | grep -cE 'v=DMARC1([; ]|$)')
     dmarc=$(echo "$dmarc_all" | head -n1)
 
     echo -e "${BOLD}$SEP${RESET}"
@@ -264,8 +266,8 @@ analyze_dmarc() {
     echo -e "${CYAN}$dmarc${RESET}"
     echo -e "${BOLD}$SEP${RESET}"
 
-    # Check DMARC prefix
-    if [[ ! "$dmarc" =~ ^v=DMARC1 ]]; then
+    # Check DMARC prefix (must be "v=DMARC1" followed by ';', a space or end)
+    if [[ ! "$dmarc" =~ ^v=DMARC1($|[[:space:];]) ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC record not found${RESET}"
         echo -e "${BOLD}$SEP${RESET}"
         return
