@@ -232,8 +232,10 @@ analyze_dmarc() {
     local domain="$1"
     local policy=""
 
-    # Retrieve DMARC record
-    dmarc=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
+    # Retrieve DMARC record(s)
+    dmarc_all=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
+    dmarc_count=$(echo "$dmarc_all" | grep -c 'v=DMARC1')
+    dmarc=$(echo "$dmarc_all" | head -n1)
 
     echo -e "${BOLD}$SEP${RESET}"
     echo -e "${BOLD}${BLUE}DMARC Analysis:${RESET}"
@@ -246,6 +248,19 @@ analyze_dmarc() {
         echo -e "${BOLD}$SEP${RESET}"
         return
     fi
+
+    # RFC 9989: if more than one DMARC record exists for the name, they are ALL
+    # discarded (no DMARC is applied), so do not analyze any of them.
+    if (( dmarc_count > 1 )); then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Multiple DMARC records found ($dmarc_count) – all discarded per RFC 9989 (no DMARC applied)${RESET}"
+        echo -e "${YELLOW}Records found:${RESET}"
+        while IFS= read -r line; do
+            echo -e "  - ${CYAN}$line${RESET}"
+        done <<< "$dmarc_all"
+        echo -e "${BOLD}$SEP${RESET}"
+        return
+    fi
+
     echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DMARC version detected: v=DMARC1${RESET}"
 
     # Check DMARC Policy (p) – anchored so np=/sp= aren't matched as p=
@@ -294,6 +309,19 @@ analyze_dmarc() {
         echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}np=reject: Non-existent subdomains rejected (RFC 9989)${RESET}"
     else
         echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}np not defined: consider np=reject to protect non-existent subdomains (RFC 9989)${RESET}"
+    fi
+
+    # DMARC policy test mode (t) – RFC 9989; distinct from the DKIM t= flag.
+    # t=y asks receivers to apply the policy one level down (no report impact).
+    if [[ "$dmarc" =~ (^|[[:space:];])t=([^;]*) ]]; then
+        t_val=$(echo "${BASH_REMATCH[2]}" | tr -d '[:space:]')
+        if [[ "$t_val" == "y" ]]; then
+            case "$policy" in
+                reject)     echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}t=y: policy in test mode – reject applied as quarantine (RFC 9989)${RESET}" ;;
+                quarantine) echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}t=y: policy in test mode – quarantine applied as none (RFC 9989)${RESET}" ;;
+                *)          echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}t=y: test mode – no effect on p=none (RFC 9989)${RESET}" ;;
+            esac
+        fi
     fi
 
     echo
@@ -365,6 +393,13 @@ analyze_dmarc() {
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}aspf=r: Relaxed SPF alignment${RESET}"
     else
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}aspf not defined: Default = relaxed (r)${RESET}"
+    fi
+
+    # Public Suffix Domain flag (psd) – RFC 9989; default "u" (not a PSD)
+    if [[ "$dmarc" =~ (^|[[:space:];])psd=y ]]; then
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}psd=y: record declares a Public Suffix Domain (RFC 9989)${RESET}"
+    elif [[ "$dmarc" =~ (^|[[:space:];])psd=n ]]; then
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}psd=n: domain declared as its own organizational domain (RFC 9989)${RESET}"
     fi
 }
 
