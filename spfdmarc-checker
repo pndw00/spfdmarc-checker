@@ -118,6 +118,37 @@ dns_txt_temperror() {
     esac
 }
 
+dmarc_check_external_destinations() {
+    local policy_domain="$1" label="$2"; shift 2
+    local uri host lp lh authname seen=""
+    lp=$(printf '%s' "$policy_domain" | tr '[:upper:]' '[:lower:]')
+    for uri in "$@"; do
+        uri=$(printf '%s' "$uri" | tr -d '[:space:]')   # DMARC URIs carry no spaces
+        [[ -z "$uri" ]] && continue
+        # Extract the destination host: mailto:user@host or scheme://host[/path]
+        host="${uri%%\!*}"      # drop the obsolete "!size" suffix
+        host="${host##*@}"      # mailto:user@host  -> host
+        host="${host##*://}"    # scheme://host/... -> host/...
+        host="${host%%/*}"      # strip any path
+        host="${host%%:*}"      # strip any port
+        host="${host%.}"        # strip a trailing dot
+        [[ -z "$host" ]] && continue
+        lh=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+        case " $seen " in *" $lh "*) continue ;; esac   # de-duplicate per tag
+        seen="$seen $lh"
+        # Same organization (identical, sub- or parent domain) needs no authorization
+        if [[ "$lh" == "$lp" || "$lh" == *".$lp" || "$lp" == *".$lh" ]]; then
+            continue
+        fi
+        authname="${policy_domain}._report._dmarc.${host}"
+        if dig +short TXT "$authname" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null | grep -qE 'v=DMARC1[; "]'; then
+            echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}$label external destination $host is authorized ($authname)${RESET}"
+        else
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}$label external destination $host NOT authorized – $authname has no v=DMARC1; reports will not be sent (RFC 9990)${RESET}"
+        fi
+    done
+}
+
 analyze_mx() {
     local domain="$1"
 
@@ -388,6 +419,7 @@ analyze_dmarc() {
         for addr in "${rua_list[@]}"; do
             echo -e "    - ${addr}"
         done
+        dmarc_check_external_destinations "$domain" "rua" "${rua_list[@]}"
     else
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Missing rua: No aggregate DMARC reports${RESET}"
     fi
@@ -405,6 +437,7 @@ analyze_dmarc() {
         for addr in "${ruf_list[@]}"; do
             echo -e "    - ${addr}"
         done
+        dmarc_check_external_destinations "$domain" "ruf" "${ruf_list[@]}"
     else
         echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Missing ruf: No individual failure reports${RESET}"
     fi
