@@ -173,9 +173,14 @@ analyze_spf() {
         done <<< "$spf_all"
     fi
 
-    # Check final "all" mechanism
-    if echo "$spf" | grep -qE '[-~?+]all'; then
-        last_all=$(echo "$spf" | grep -oE '[-~?+]all')
+    last_all=""
+    read -ra _spf_tokens <<< "$spf"
+    for mech in "${_spf_tokens[@]}"; do
+        case "$mech" in
+            [-~?+]all) last_all="$mech" ;;
+        esac
+    done
+    if [[ -n "$last_all" ]]; then
         case "$last_all" in
             "-all")  echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}-all: Strict policy – only authorized servers may send emails${RESET}" ;;
             "~all")  echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}~all: Soft fail – unauthorized sources flagged but still accepted${RESET}" ;;
