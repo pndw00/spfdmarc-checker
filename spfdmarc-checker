@@ -43,7 +43,7 @@ show_help() {
     echo -e "  ${YELLOW}--dmarc${RESET}              [✓] Only analyze DMARC record"
     echo -e "  ${YELLOW}--dkim${RESET}               [✓] Only analyze DKIM record"
     echo -e "  ${YELLOW}-s, --selector SEL${RESET}   Test a specific DKIM selector"
-    echo -e "  ${YELLOW}--dns 8.8.8.8${RESET}        Perform DNS resolutions with custom DNS server (default: 8.8.8.8)"
+    echo -e "  ${YELLOW}--dns 8.8.8.8${RESET}        Perform DNS resolutions with custom DNS server (default: system resolver)"
     echo -e "  ${YELLOW}-q, --quiet${RESET}          Hide header"
     echo -e "  ${YELLOW}--no-color${RESET}           Disable colored output (auto-detected if not a TTY)"
     echo
@@ -496,11 +496,6 @@ fi
 if [[ -z "$DOMAIN" ]]; then
     show_help
     exit 1
-fi
-
-# If user didn't use --dns, use default dns server
-if [[ -z "$DNS_SERVER" ]]; then
-    DNS_SERVER='@8.8.8.8'
 fi
 
 # Check dig
