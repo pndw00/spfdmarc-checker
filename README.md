@@ -1,11 +1,12 @@
 # spfdmarc-checker
-A script to analyze a domain's MX, SPF, and DMARC records, providing a detailed report, highlighting potential security issues, and suggesting improvements.
+A script to analyze a domain's MX, SPF, DMARC, and DKIM records, providing a detailed report, highlighting potential security issues, and suggesting improvements.
 
 ![image](https://raw.githubusercontent.com/pndw00/spfdmarc-checker/refs/heads/main/images/example.png)
 
 ## Prerequisites
 - git
 - dig
+- openssl (optional, used to measure DKIM key sizes)
 
 ## Installation
 1. Clone the repository:
@@ -28,7 +29,7 @@ chmod +x spfdmarc-checker
 echo "alias spfdmarc-checker=\"$PWD/spfdmarc-checker\"" >> ~/.zshrc
 ```
 Replace `.zshrc` with `rc` file of your shell.
-To make your new alias affective you need to reload your shell.
+To make your new alias effective you need to reload your shell.
 
 ## How to use
 ```txt
@@ -42,7 +43,7 @@ Options:
   --dmarc              [✓] Only analyze DMARC record
   --dkim               [✓] Only analyze DKIM record
   -s, --selector SEL   Test a specific DKIM selector
-  --dns 8.8.8.8        Perform DNS resolutions with custom DNS server (default: 8.8.8.8)
+  --dns 8.8.8.8        Perform DNS resolutions with custom DNS server (default: system resolver)
   -q, --quiet          Hide header
   --no-color           Disable colored output (auto-detected if not a TTY)
 
