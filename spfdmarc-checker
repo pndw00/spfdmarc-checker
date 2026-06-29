@@ -15,12 +15,20 @@ RESET='\033[0m' # RESET
 SEP="-----------------------------------"
 
 show_header=true
-no_color=false
 
 # Disable ANSI colors (--no-color or non-TTY output)
 disable_colors() {
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' BOLD='' RESET=''
 }
+
+# Decide on colors before any output, so --help and error messages are
+# also stripped when needed (non-TTY, NO_COLOR env, or --no-color flag).
+if [[ -n "$NO_COLOR" ]] || [[ ! -t 1 ]]; then
+    disable_colors
+fi
+for arg in "$@"; do
+    [[ "$arg" == "--no-color" ]] && { disable_colors; break; }
+done
 
 show_help() {
     local script_name
@@ -448,7 +456,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --no-color)
-            no_color=true
             shift
             ;;
         *)
@@ -476,11 +483,6 @@ fi
 # If user didn't use --dns, use default dns server
 if [[ -z "$DNS_SERVER" ]]; then
     DNS_SERVER='@8.8.8.8'
-fi
-
-# Disable colors if requested, if NO_COLOR env is set, or if output is not a terminal
-if $no_color || [[ -n "$NO_COLOR" ]] || [[ ! -t 1 ]]; then
-    disable_colors
 fi
 
 # Check dig
