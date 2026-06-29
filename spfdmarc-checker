@@ -225,6 +225,7 @@ analyze_spf() {
 
 analyze_dmarc() {
     local domain="$1"
+    local policy=""
 
     # Retrieve DMARC record
     dmarc=$(dig +short TXT "_dmarc.$domain" ${DNS_SERVER:+"$DNS_SERVER"} | grep 'v=DMARC1' | sed 's/" "//g' | tr -d '"')
@@ -271,6 +272,8 @@ analyze_dmarc() {
             echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}sp not defined => Subdomains inherit p=quarantine: partial protection${RESET}"
         elif [[ "$policy" == "reject"  ]]; then
             echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}sp not defined => Subdomains inherit p=reject: strong protection${RESET}"
+        else
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}sp not defined and p= invalid => subdomain policy undefined${RESET}"
         fi
     fi
 
