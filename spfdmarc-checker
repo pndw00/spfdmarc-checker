@@ -151,9 +151,10 @@ analyze_spf() {
     # Check SPF prefix
     if [[ "$spf" != v=spf1* ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}SPF record not found${RESET}"
-    else
-        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}SPF version detected: v=spf1${RESET}"
+        echo -e "${BOLD}$SEP${RESET}"
+        return
     fi
+    echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}SPF version detected: v=spf1${RESET}"
 
     # Check for multiple SPF records (RFC 7208: MUST have at most one)
     if (( spf_count > 1 )); then
@@ -228,9 +229,10 @@ analyze_dmarc() {
     # Check DMARC prefix
     if [[ ! "$dmarc" =~ ^v=DMARC1 ]]; then
         echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC record not found${RESET}"
-    else
-        echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DMARC version detected: v=DMARC1${RESET}"
+        echo -e "${BOLD}$SEP${RESET}"
+        return
     fi
+    echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DMARC version detected: v=DMARC1${RESET}"
 
     # Check DMARC Policy (p)
     if [[ "$dmarc" =~ p=none ]]; then
