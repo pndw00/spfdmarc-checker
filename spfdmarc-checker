@@ -102,6 +102,22 @@ count_spf_lookups() {
     done <<< "$mechanisms"
 }
 
+# Classify a TXT lookup (RFC 7208 §4.4): returns success (0) only on a transient
+# DNS failure – SERVFAIL/REFUSED or a timeout/unreachable server – which maps to
+# "temperror". NXDOMAIN and NOERROR mean the lookup completed (no record / record
+# present), so they are NOT temperrors.
+dns_txt_temperror() {
+    local name="$1" out status rc
+    out=$(dig +noall +comments TXT "$name" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null)
+    rc=$?
+    (( rc != 0 )) && return 0          # timeout / no server reached
+    status=$(sed -n 's/.*status: \([A-Z]*\).*/\1/p' <<< "$out" | head -n1)
+    case "$status" in
+        NOERROR|NXDOMAIN) return 1 ;;   # completed: none or record, not a temperror
+        *)                return 0 ;;   # SERVFAIL/REFUSED/unknown -> temperror
+    esac
+}
+
 analyze_mx() {
     local domain="$1"
 
@@ -159,7 +175,11 @@ analyze_spf() {
 
     # Check SPF prefix (must be "v=spf1" followed by a space or end of record)
     if [[ ! "$spf" =~ ^v=spf1($|[[:space:]]) ]]; then
-        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}SPF record not found${RESET}"
+        if dns_txt_temperror "$domain"; then
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Temporary DNS error resolving SPF (temperror) – result inconclusive${RESET}"
+        else
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}SPF record not found${RESET}"
+        fi
         echo -e "${BOLD}$SEP${RESET}"
         return
     fi
@@ -268,7 +288,11 @@ analyze_dmarc() {
 
     # Check DMARC prefix (must be "v=DMARC1" followed by ';', a space or end)
     if [[ ! "$dmarc" =~ ^v=DMARC1($|[[:space:];]) ]]; then
-        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC record not found${RESET}"
+        if dns_txt_temperror "_dmarc.$domain"; then
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}Temporary DNS error resolving DMARC (temperror) – result inconclusive${RESET}"
+        else
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}DMARC record not found${RESET}"
+        fi
         echo -e "${BOLD}$SEP${RESET}"
         return
     fi
