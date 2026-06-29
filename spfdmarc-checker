@@ -174,10 +174,13 @@ analyze_spf() {
     fi
 
     last_all=""
+    redirect_target=""
+    redirect_count=0
     read -ra _spf_tokens <<< "$spf"
     for mech in "${_spf_tokens[@]}"; do
         case "$mech" in
-            [-~?+]all) last_all="$mech" ;;
+            [-~?+]all)  last_all="$mech" ;;
+            redirect=*) redirect_target="${mech#redirect=}"; (( redirect_count++ )) ;;
         esac
     done
     if [[ -n "$last_all" ]]; then
@@ -187,8 +190,28 @@ analyze_spf() {
             "?all")  echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}?all: Neutral – no effective SPF protection${RESET}" ;;
             "+all")  echo -e "[${BOLD}${RED}✗${RESET}] ${RED}+all: Permits ANY sender – highly dangerous configuration${RESET}" ;;
         esac
+        # RFC 7208: a 'redirect' modifier is ignored when an 'all' mechanism is present
+        if [[ -n "$redirect_target" ]]; then
+            echo -e "[${BOLD}${YELLOW}!!${RESET}] ${YELLOW}redirect=$redirect_target present but IGNORED – 'all' takes precedence (RFC 7208)${RESET}"
+        fi
+    elif [[ -n "$redirect_target" ]]; then
+        # RFC 7208 §4.7: with no 'all', the 'redirect' provides the record's result
+        echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}No 'all' mechanism – processing is redirected to $redirect_target (RFC 7208)${RESET}"
+        # The redirect target must publish an SPF record, else PermError (RFC 7208 §6.1)
+        if [[ "$redirect_target" != *%* ]]; then
+            if dig +short TXT "$redirect_target" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null | grep -q 'v=spf1'; then
+                echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}redirect target $redirect_target publishes an SPF record${RESET}"
+            else
+                echo -e "[${BOLD}${RED}✗${RESET}] ${RED}redirect target $redirect_target has NO SPF record – PermError (RFC 7208)${RESET}"
+            fi
+        fi
     else
-        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No 'all' mechanism found – SPF record is incomplete${RESET}"
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}No 'all' mechanism and no redirect – falls through to implicit ?all (neutral, no protection)${RESET}"
+    fi
+
+    # RFC 7208 §6: the 'redirect' modifier MUST NOT appear more than once
+    if (( redirect_count > 1 )); then
+        echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Multiple redirect modifiers ($redirect_count) – invalid per RFC 7208 (causes PermError)${RESET}"
     fi
 
     echo
@@ -222,7 +245,6 @@ analyze_spf() {
             a|a:*|a/*)   echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'a' mechanism detected: $mech – valid, may increase DNS lookups${RESET}" ;;
             mx|mx:*|mx/*) echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}'mx' mechanism detected: $mech – OK, but ensure all MX servers are trusted${RESET}" ;;
             ptr|ptr:*)   echo -e "[${BOLD}${RED}✗${RESET}] ${RED}'ptr' mechanism deprecated ($mech) – should be avoided${RESET}" ;;
-            redirect=*)  echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}SPF redirected to: ${mech#redirect=}${RESET}" ;;
             exists:*)    echo -e "[${BOLD}${YELLOW}i${RESET}] ${YELLOW}Exists mechanism: ${mech#exists:} – advanced macro usage${RESET}" ;;
         esac
     done <<< "$(echo "$spf" | grep -oE '\b(ip4:[^ ]+|ip6:[^ ]+|include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b')"
