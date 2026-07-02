@@ -82,7 +82,6 @@ count_spf_lookups() {
     done
     case " ${_spf_resolved[*]} " in *" $domain "*) return ;; esac   # already expanded -> skip subtree
 
-    # Resolve SPF for this domain
     local record
     record=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null \
              | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
@@ -242,6 +241,7 @@ analyze_spf() {
     read -ra _spf_tokens <<< "$spf"
     for mech in "${_spf_tokens[@]}"; do
         case "$mech" in
+            all)        last_all="+all" ;;   # bare 'all' = implicit '+' qualifier
             [-~?+]all)  last_all="$mech" ;;
             redirect=*) redirect_target="${mech#redirect=}"; (( redirect_count++ )) ;;
         esac
