@@ -68,38 +68,49 @@ show_help() {
 # Recursive SPF DNS lookup counter (RFC 7208: max 10)
 # Counts: include, a, mx, ptr, exists, redirect (each = 1 lookup)
 # Then follows include/redirect recursively
-_spf_visited=()
 _spf_lookup_total=0
+_spf_resolved=()
+_spf_permerror=0
 
 count_spf_lookups() {
-    local domain="$1"
+    local domain="$1"; shift
+    local path=("$@")
 
-    # Circular include protection
-    for visited in "${_spf_visited[@]}"; do
-        [[ "$visited" == "$domain" ]] && return
+    local p
+    for p in "${path[@]}"; do
+        [[ "$p" == "$domain" ]] && { _spf_permerror=1; return; }   # cycle -> PermError
     done
-    _spf_visited+=("$domain")
+    case " ${_spf_resolved[*]} " in *" $domain "*) return ;; esac   # already expanded -> skip subtree
 
     # Resolve SPF for this domain
     local record
-    record=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
+    record=$(dig +short TXT "$domain" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null \
+             | grep 'v=spf1' | head -n1 | sed 's/" "//g' | tr -d '"')
     [[ -z "$record" ]] && return
 
-    # Extract DNS-triggering mechanisms
-    local mechanisms
-    mechanisms=$(echo "$record" | grep -oE '\b(include:[^ ]+|redirect=[^ ]+|exists:[^ ]+|a(:[^ ]+|/[^ ]+)?|mx(:[^ ]+|/[^ ]+)?|ptr(:[^ ]+)?)\b')
+    _spf_resolved+=("$domain")
+    path+=("$domain")
 
-    # Count each mechanism as 1 lookup
-    while IFS= read -r mech; do
-        [[ -z "$mech" ]] && continue
-        (( _spf_lookup_total++ ))
+    # 'redirect' is ignored when an 'all' mechanism is present.
+    local has_all=0
+    [[ "$record" =~ (^|[[:space:]])[-~?+]?all([[:space:]]|$) ]] && has_all=1
 
-        # Recurse into include and redirect targets
+    local -a tokens; read -ra tokens <<< "$record"
+    local tok mech
+    for tok in "${tokens[@]}"; do
+        mech="${tok#[-~?+]}"   # strip an optional qualifier (+ - ~ ?)
         case "$mech" in
-            include:*) count_spf_lookups "${mech#include:}" ;;
-            redirect=*) count_spf_lookups "${mech#redirect=}" ;;
+            include:*)
+                (( _spf_lookup_total++ ))
+                count_spf_lookups "${mech#include:}" "${path[@]}" ;;
+            redirect=*)
+                (( has_all )) && continue
+                (( _spf_lookup_total++ ))
+                count_spf_lookups "${mech#redirect=}" "${path[@]}" ;;
+            a|a:*|a/*|mx|mx:*|mx/*|ptr|ptr:*|exists:*)
+                (( _spf_lookup_total++ )) ;;
         esac
-    done <<< "$mechanisms"
+    done
 }
 
 # Classify a TXT lookup (RFC 7208 §4.4): returns success (0) only on a transient
@@ -268,8 +279,7 @@ analyze_spf() {
 
     echo
     # DNS lookup count – recursive (RFC 7208: max 10 total, includes nested)
-    _spf_visited=()
-    _spf_lookup_total=0
+    _spf_lookup_total=0; _spf_resolved=(); _spf_permerror=0
     count_spf_lookups "$domain"
     dns_lookup_count=$_spf_lookup_total
 
@@ -280,8 +290,9 @@ analyze_spf() {
     else
         echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}DNS lookups: $dns_lookup_count/10${RESET}"
     fi
-    if (( ${#_spf_visited[@]} > 1 )); then
-        echo -e "${BLUE}Domains resolved:${RESET} ${_spf_visited[*]}"
+    (( _spf_permerror )) && echo -e "[${BOLD}${RED}✗${RESET}] ${RED}Circular reference in SPF – PermError${RESET}"
+    if (( ${#_spf_resolved[@]} > 1 )); then
+        echo -e "${BLUE}Domains resolved:${RESET} ${_spf_resolved[*]}"
     fi
 
     echo
