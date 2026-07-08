@@ -132,6 +132,11 @@ dmarc_check_external_destinations() {
     local policy_domain="$1" label="$2"; shift 2
     local uri host lp lh authname seen=""
     lp=$(printf '%s' "$policy_domain" | tr '[:upper:]' '[:lower:]')
+
+    local rfc_ref=""
+    [[ "$label" == "rua" ]] && rfc_ref="RFC 9990"
+    [[ "$label" == "ruf" ]] && rfc_ref="RFC 9991, mechanism in RFC 9990"
+
     for uri in "$@"; do
         uri=$(printf '%s' "$uri" | tr -d '[:space:]')   # DMARC URIs carry no spaces
         [[ -z "$uri" ]] && continue
@@ -151,10 +156,10 @@ dmarc_check_external_destinations() {
             continue
         fi
         authname="${policy_domain}._report._dmarc.${host}"
-        if dig +short TXT "$authname" ${DNS_SERVER:+"$DNS_SERVER"} 2>/dev/null | grep -qE 'v=DMARC1[; "]'; then
+        if dig +short TXT "$authname" ${DNS_SERVER:+"@$DNS_SERVER"} 2>/dev/null | grep -qE '^"v=DMARC1[; "]'; then
             echo -e "[${BOLD}${GREEN}✓${RESET}] ${GREEN}$label external destination $host is authorized ($authname)${RESET}"
         else
-            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}$label external destination $host NOT authorized – $authname has no v=DMARC1; reports will not be sent (RFC 9990)${RESET}"
+            echo -e "[${BOLD}${RED}✗${RESET}] ${RED}$label external destination $host NOT authorized – $authname has no v=DMARC1; reports will not be sent ($rfc_ref)${RESET}"
         fi
     done
 }
