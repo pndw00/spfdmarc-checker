@@ -1,7 +1,7 @@
 # spfdmarc-checker
 A script to analyze a domain's MX, SPF, DMARC, and DKIM records, providing a detailed report, highlighting potential security issues, and suggesting improvements.
 
-![image](https://raw.githubusercontent.com/pndw00/spfdmarc-checker/refs/heads/main/images/example.png)
+![image](images/example.png)
 
 ## Prerequisites
 - git
